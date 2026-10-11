@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleprompter</title>
+<style>
+  :root {
+    --fs: 36px;
+    --w: 55vw;
+    --bg: #0b0c0f;
+    --panel: rgba(18, 20, 25, .92);
+    --line: rgba(255, 255, 255, .12);
+    --text: #f4f5f7;
+    --muted: #9aa0ab;
+    --accent: #ffd34d;
+    --rec: #ff3b46;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, select, input, textarea { font: inherit; color: inherit; }
+
+  /* Camera */
+  #cam {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    background: #000;
+  }
+  body.mirror #cam { transform: scaleX(-1); }
+
+  #notice {
+    position: fixed; inset: 0;
+    display: none; place-items: center;
+    padding: 24px; text-align: center;
+    color: var(--muted); font-size: 16px;
+  }
+  #notice.show { display: grid; }
+  #notice div { max-width: 460px; }
+  #notice b { display: block; color: var(--text); font-size: 20px; margin-bottom: 8px; }
+
+  /* Prompter: sits top-centre, right under the laptop camera */
+  #prompter {
+    position: fixed; top: 0; left: 50%;
+    width: var(--w); height: 46vh;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, .6);
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    overflow: hidden;
+    cursor: ns-resize;
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 72%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 0, #000 72%, transparent 100%);
+  }
+  #scroll {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 0 44px;
+    font-size: var(--fs); line-height: 1.38; font-weight: 600;
+    letter-spacing: .005em;
+    white-space: pre-wrap; overflow-wrap: break-word;
+    will-change: transform;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+  }
+  #scroll.empty { color: var(--muted); font-weight: 500; }
+  .marker {
+    position: absolute; top: 28%;
+    width: 0; height: 0;
+    border: 9px solid transparent;
+    margin-top: -9px;
+    pointer-events: none;
+  }
+  .marker.l { left: 10px; border-left-color: var(--accent); }
+  .marker.r { right: 10px; border-right-color: var(--accent); }
+
+  /* Countdown */
+  #count {
+    position: fixed; inset: 0;
+    display: none; place-items: center;
+    font-size: 26vh; font-weight: 700;
+    text-shadow: 0 6px 40px rgba(0, 0, 0, .7);
+    pointer-events: none;
+  }
+  #count.show { display: grid; }
+
+  /* Control bar */
+  #bar {
+    position: fixed; left: 50%; bottom: 18px;
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px;
+    max-width: calc(100vw - 24px);
+    padding: 10px 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .45);
+  }
+  .btn {
+    height: 38px; padding: 0 14px;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { background: rgba(255, 255, 255, .15); }
+  .btn.icon { width: 38px; padding: 0; font-size: 16px; }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #1a1500; font-weight: 600; }
+  #recBtn {
+    width: 52px; height: 52px; flex: none;
+    border-radius: 50%;
+    border: 3px solid #fff; background: transparent;
+    cursor: pointer; padding: 0;
+    display: grid; place-items: center;
+  }
+  #recBtn i {
+    display: block; width: 36px; height: 36px;
+    border-radius: 50%; background: var(--rec);
+    transition: all .15s ease;
+  }
+  body.recording #recBtn i, body.countdown #recBtn i { width: 20px; height: 20px; border-radius: 5px; }
+  #timer {
+    min-width: 62px;
+    font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 600;
+    display: flex; align-items: center; gap: 7px;
+  }
+  #timer::before {
+    content: ""; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted);
+  }
+  body.recording #timer::before { background: var(--rec); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .sep { width: 1px; height: 30px; background: var(--line); flex: none; }
+  .slider { display: grid; gap: 2px; font-size: 11px; color: var(--muted); }
+  .slider span { display: flex; justify-content: space-between; gap: 10px; }
+  .slider b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .slider input { width: 104px; accent-color: var(--accent); margin: 0; }
+  #meter {
+    width: 6px; height: 38px; flex: none;
+    border-radius: 3px; background: rgba(255, 255, 255, .1);
+    display: flex; align-items: flex-end; overflow: hidden;
+  }
+  #meter i { display: block; width: 100%; height: 0; background: #47d16c; }
+
+  /* Drawers */
+  .drawer {
+    position: fixed; top: 0; bottom: 0;
+    width: min(440px, 92vw);
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 18px;
+    background: var(--panel);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+    transition: transform .22s ease;
+    z-index: 5;
+  }
+  .drawer.left { left: 0; border-right: 1px solid var(--line); transform: translateX(-102%); }
+  .drawer.right { right: 0; border-left: 1px solid var(--line); transform: translateX(102%); overflow-y: auto; }
+  .drawer.open { transform: none; }
+  .drawer header { display: flex; align-items: center; justify-content: space-between; }
+  .drawer h2 { margin: 0; font-size: 17px; }
+  .drawer h3 { margin: 10px 0 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  #script {
+    flex: 1; width: 100%; resize: none;
+    padding: 14px;
+    background: rgba(0, 0, 0, .35);
+    border: 1px solid var(--line); border-radius: 12px;
+    font-size: 15px; line-height: 1.5;
+    outline: none;
+  }
+  #script:focus { border-color: var(--accent); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); }
+  .field { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+  .field select {
+    height: 36px; padding: 0 8px;
+    background: rgba(0, 0, 0, .35);
+    border: 1px solid var(--line); border-radius: 9px;
+  }
+  .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .check input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .take {
+    display: grid; gap: 8px;
+    padding: 10px;
+    background: rgba(0, 0, 0, .3);
+    border: 1px solid var(--line); border-radius: 12px;
+  }
+  .take video { width: 100%; border-radius: 8px; background: #000; }
+  .take .row a { text-decoration: none; display: inline-flex; align-items: center; }
+  #noTakes { color: var(--muted); }
+  kbd {
+    padding: 1px 6px; border-radius: 5px;
+    background: rgba(255, 255, 255, .1); border: 1px solid var(--line);
+    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
+  }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; color: var(--muted); font-size: 13px; }
+
+  @media (max-width: 900px) {
+    #bar { flex-wrap: wrap; justify-content: center; }
+    .sep { display: none; }
+  }
+</style>
+</head>
+<body class="mirror">
+
+<video id="cam" autoplay muted playsinline></video>
+<div id="notice"><div><b>Waiting for camera…</b><span>Allow camera and microphone access when your browser asks.</span></div></div>
+
+<div id="prompter" title="Scroll here to move the script by hand">
+  <div id="scroll"></div>
+  <div class="marker l"></div>
+  <div class="marker r"></div>
+</div>
+
+<div id="count"></div>
+
+<div id="bar">
+  <button class="btn" id="scriptBtn">Script</button>
+  <button class="btn icon" id="restartBtn" title="Back to top (Home)">⟲</button>
+  <button class="btn icon" id="playBtn" title="Play / pause scrolling (Space)">▶</button>
+  <div class="sep"></div>
+  <button id="recBtn" title="Record / stop (R)"><i></i></button>
+  <div id="timer">0:00</div>
+  <div id="meter" title="Microphone level"><i></i></div>
+  <div class="sep"></div>
+  <label class="slider"><span>Speed <b id="wpmVal"></b></span><input type="range" id="wpm" min="60" max="260" step="5"></label>
+  <label class="slider"><span>Text size <b id="fsVal"></b></span><input type="range" id="fs" min="20" max="80" step="1"></label>
+  <label class="slider"><span>Width <b id="wVal"></b></span><input type="range" id="w" min="30" max="100" step="1"></label>
+  <div class="sep"></div>
+  <button class="btn" id="takesBtn">Takes</button>
+</div>
+
+<aside class="drawer left" id="scriptDrawer">
+  <header><h2>Script</h2><button class="btn primary" id="scriptDone">Done</button></header>
+  <textarea id="script" placeholder="Paste your script here…" spellcheck="false"></textarea>
+  <div class="row"><span id="stats"></span><button class="btn" id="clearBtn">Clear</button></div>
+</aside>
+
+<aside class="drawer right" id="takesDrawer">
+  <header><h2>Takes</h2><button class="btn" id="takesClose">Close</button></header>
+  <div id="noTakes">Nothing recorded yet. Takes stay here until you close the page, so download the ones you want to keep.</div>
+  <div id="takes" style="display:grid;gap:12px"></div>
+
+  <h3>Camera &amp; sound</h3>
+  <label class="field">Camera<select id="camSel"></select></label>
+  <label class="field">Microphone<select id="micSel"></select></label>
+  <label class="check"><input type="checkbox" id="mirror"> Mirror the preview (the recording is never mirrored)</label>
+  <label class="check"><input type="checkbox" id="autoScroll"> Start scrolling when recording starts</label>
+
+  <h3>Keyboard</h3>
+  <div class="keys">
+    <kbd>R</kbd><span>Record / stop</span>
+    <kbd>Space</kbd><span>Play / pause the script</span>
+    <kbd>↑</kbd> <span>Faster</span>
+    <kbd>↓</kbd> <span>Slower</span>
+    <kbd>←</kbd> <span>Back a little</span>
+    <kbd>→</kbd> <span>Forward a little</span>
+    <kbd>Home</kbd><span>Back to the top</span>
+  </div>
+</aside>
+
+<script>
+const $ = id => document.getElementById(id);
+const cam = $('cam'), prompter = $('prompter'), scrollEl = $('scroll'), scriptEl = $('script');
+
+// ---------- Settings ----------
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem('tp.' + key); return v === null ? fallback : JSON.parse(v); }
+    catch { return fallback; }
+  },
+  set(key, value) { try { localStorage.setItem('tp.' + key, JSON.stringify(value)); } catch {} }
+};
+
+const settings = {
+  wpm: store.get('wpm', 130),
+  fs: store.get('fs', 36),
+  w: store.get('w', 55),
+  mirror: store.get('mirror', true),
+  autoScroll: store.get('autoScroll', true),
+  camId: store.get('camId', ''),
+  micId: store.get('micId', '')
+};
+
+// ---------- Prompter ----------
+const READ_LINE = 0.28;          // where the reading markers sit, as a fraction of the prompter height
+let offset = 0;                  // px scrolled past the reading line
+let textHeight = 0, words = 0;
+let playing = false;
+
+function countWords(text) { return (text.trim().match(/\S+/g) || []).length; }
+
+function fmtTime(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function layout() {
+  const progress = textHeight ? offset / textHeight : 0;
+  document.documentElement.style.setProperty('--fs', settings.fs + 'px');
+  document.documentElement.style.setProperty('--w', settings.w + 'vw');
+  const text = scriptEl.value;
+  words = countWords(text);
+  scrollEl.classList.toggle('empty', !words);
+  scrollEl.textContent = words ? text.trim() : 'Click “Script” and paste in your text.';
+  textHeight = scrollEl.offsetHeight;
+  offset = words ? progress * textHeight : 0;
+  $('wpmVal').textContent = settings.wpm + ' wpm';
+  $('fsVal').textContent = settings.fs + ' px';
+  $('wVal').textContent = settings.w + '%';
+  $('stats').textContent = words
+    ? words + ' words · about ' + fmtTime(words / settings.wpm * 60) + ' at this speed'
+    : 'No script yet';
+  render();
+}
+
+function render() {
+  const y = prompter.clientHeight * READ_LINE - settings.fs * 0.69 - offset;
+  scrollEl.style.transform = 'translateY(' + y.toFixed(2) + 'px)';
+}
+
+function setPlaying(on) {
+  playing = on && words > 0;
+  $('playBtn').textContent = playing ? '❚❚' : '▶';
+}
+
+function nudge(px) {
+  offset = Math.min(Math.max(0, offset + px), textHeight);
+  render();
+}
+
+function setSpeed(wpm) {
+  settings.wpm = Math.min(260, Math.max(60, wpm));
+  $('wpm').value = settings.wpm;
+  store.set('wpm', settings.wpm);
+  layout();
+}
+
+// ---------- Camera ----------
+let stream = null;
+let audioCtx = null, analyser = null, audioSrc = null, levelBuf = null;
+
+function showNotice(title, body) {
+  const n = $('notice');
+  if (!title) { n.classList.remove('show'); return; }
+  n.querySelector('b').textContent = title;
+  n.querySelector('span').textContent = body;
+  n.classList.add('show');
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showNotice('Camera not available', 'Open this page through start.command (http://localhost) in Chrome or Safari.');
+    return;
+  }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const constraints = (camId, micId) => ({
+    video: {
+      deviceId: camId ? { exact: camId } : undefined,
+      width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
+    },
+    audio: { deviceId: micId ? { exact: micId } : undefined }
+  });
+  try {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints(settings.camId, settings.micId));
+    } catch (err) {
+      // A remembered device that's been unplugged shouldn't block the default one
+      if (err.name !== 'OverconstrainedError' && err.name !== 'NotFoundError') throw err;
+      stream = await navigator.mediaDevices.getUserMedia(constraints('', ''));
+    }
+  } catch (err) {
+    stream = null;
+    showNotice(
+      err.name === 'NotAllowedError' ? 'Camera access was blocked' : 'Couldn’t start the camera',
+      err.name === 'NotAllowedError'
+        ? 'Allow camera and microphone for this page in your browser’s address bar (and in System Settings → Privacy & Security), then reload.'
+        : (err.message || err.name) + ' — check that no other app is using the camera, then reload.'
+    );
+    return;
+  }
+  showNotice(null);
+  cam.srcObject = stream;
+  setupMeter();
+  await listDevices();
+}
+
+async function listDevices() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const fill = (select, kind, track) => {
+    const current = track && track.getSettings().deviceId;
+    select.textContent = '';
+    devices.filter(d => d.kind === kind).forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || (kind === 'videoinput' ? 'Camera ' : 'Microphone ') + (i + 1);
+      o.selected = d.deviceId === current;
+      select.appendChild(o);
+    });
+  };
+  fill($('camSel'), 'videoinput', stream && stream.getVideoTracks()[0]);
+  fill($('micSel'), 'audioinput', stream && stream.getAudioTracks()[0]);
+}
+
+function setupMeter() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioSrc) audioSrc.disconnect();
+    audioSrc = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    levelBuf = new Uint8Array(analyser.fftSize);
+    audioSrc.connect(analyser);
+  } catch { analyser = null; }
+}
+
+function drawMeter() {
+  if (!analyser) return;
+  analyser.getByteTimeDomainData(levelBuf);
+  let peak = 0;
+  for (let i = 0; i < levelBuf.length; i++) peak = Math.max(peak, Math.abs(levelBuf[i] - 128));
+  $('meter').firstElementChild.style.height = Math.min(100, peak / 128 * 220) + '%';
+}
+
+// ---------- Recording ----------
+let state = 'idle';              // idle | countdown | recording
+let recorder = null, chunks = [], recStart = 0, countTimer = null;
+const takes = [];
+
+function setState(next) {
+  state = next;
+  document.body.classList.toggle('recording', state === 'recording');
+  document.body.classList.toggle('countdown', state === 'countdown');
+  $('camSel').disabled = $('micSel').disabled = state !== 'idle';
+}
+
+function pickMime() {
+  const types = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+function toggleRecord() {
+  if (state === 'recording') { recorder.stop(); return; }
+  if (state === 'countdown') {
+    clearInterval(countTimer);
+    $('count').classList.remove('show');
+    setState('idle');
+    return;
+  }
+  if (!stream) return;
+  closeDrawers();
+  setPlaying(false);
+  if (offset >= textHeight - 1) offset = 0;   // finished the last take: start again from the top
+  render();
+  let n = 3;
+  setState('countdown');
+  $('count').textContent = n;
+  $('count').classList.add('show');
+  countTimer = setInterval(() => {
+    n--;
+    if (n > 0) { $('count').textContent = n; return; }
+    clearInterval(countTimer);
+    $('count').classList.remove('show');
+    beginRecording();
+  }, 1000);
+}
+
+function beginRecording() {
+  const mimeType = pickMime();
+  chunks = [];
+  try {
+    recorder = new MediaRecorder(stream, { mimeType: mimeType || undefined, videoBitsPerSecond: 8000000 });
+  } catch (err) {
+    setState('idle');
+    showNotice('Couldn’t start recording', err.message || err.name);
+    return;
+  }
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = finishRecording;
+  recorder.start(1000);
+  recStart = performance.now();
+  setState('recording');
+  if (settings.autoScroll) setPlaying(true);
+}
+
+function finishRecording() {
+  const type = recorder.mimeType || 'video/webm';
+  const blob = new Blob(chunks, { type });
+  const seconds = (performance.now() - recStart) / 1000;
+  chunks = [];
+  setState('idle');
+  setPlaying(false);
+  if (!blob.size) return;
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes());
+  addTake({
+    url: URL.createObjectURL(blob),
+    name: 'take-' + (takes.length + 1) + '_' + stamp + (type.includes('mp4') ? '.mp4' : '.webm'),
+    info: fmtTime(seconds) + ' · ' + (blob.size / 1048576).toFixed(1) + ' MB',
+    saved: false
+  });
+  openDrawer('takesDrawer');
+}
+
+function addTake(take) {
+  takes.push(take);
+  $('noTakes').style.display = 'none';
+  const el = document.createElement('div');
+  el.className = 'take';
+  const video = document.createElement('video');
+  video.controls = true; video.playsInline = true; video.src = take.url;
+  const title = document.createElement('div');
+  title.textContent = take.name + ' — ' + take.info;
+  const row = document.createElement('div');
+  row.className = 'row';
+  const dl = document.createElement('a');
+  dl.className = 'btn primary'; dl.textContent = 'Download';
+  dl.href = take.url; dl.download = take.name;
+  dl.onclick = () => { take.saved = true; };
+  const del = document.createElement('button');
+  del.className = 'btn'; del.textContent = 'Delete';
+  del.onclick = () => {
+    URL.revokeObjectURL(take.url);
+    takes.splice(takes.indexOf(take), 1);
+    el.remove();
+    if (!takes.length) $('noTakes').style.display = '';
+  };
+  row.append(dl, del);
+  el.append(video, title, row);
+  $('takes').prepend(el);
+}
+
+// ---------- Drawers ----------
+function openDrawer(id) {
+  closeDrawers();
+  $(id).classList.add('open');
+  if (id === 'scriptDrawer') scriptEl.focus();
+}
+function closeDrawers() {
+  document.querySelectorAll('.drawer.open').forEach(d => d.classList.remove('open'));
+  if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+}
+function toggleDrawer(id) { $(id).classList.contains('open') ? closeDrawers() : openDrawer(id); }
+
+// ---------- Wiring ----------
+$('scriptBtn').onclick = () => toggleDrawer('scriptDrawer');
+$('scriptDone').onclick = closeDrawers;
+$('takesBtn').onclick = () => toggleDrawer('takesDrawer');
+$('takesClose').onclick = closeDrawers;
+$('clearBtn').onclick = () => { scriptEl.value = ''; store.set('script', ''); offset = 0; setPlaying(false); layout(); scriptEl.focus(); };
+$('restartBtn').onclick = () => { offset = 0; render(); };
+$('playBtn').onclick = () => {
+  if (!playing && offset >= textHeight - 1) offset = 0;
+  setPlaying(!playing);
+};
+$('recBtn').onclick = toggleRecord;
+
+scriptEl.addEventListener('input', () => { store.set('script', scriptEl.value); layout(); });
+$('wpm').addEventListener('input', e => setSpeed(+e.target.value));
+$('fs').addEventListener('input', e => { settings.fs = +e.target.value; store.set('fs', settings.fs); layout(); });
+$('w').addEventListener('input', e => { settings.w = +e.target.value; store.set('w', settings.w); layout(); });
+$('mirror').addEventListener('change', e => {
+  settings.mirror = e.target.checked; store.set('mirror', settings.mirror);
+  document.body.classList.toggle('mirror', settings.mirror);
+});
+$('autoScroll').addEventListener('change', e => { settings.autoScroll = e.target.checked; store.set('autoScroll', settings.autoScroll); });
+$('camSel').addEventListener('change', e => { settings.camId = e.target.value; store.set('camId', settings.camId); startCamera(); });
+$('micSel').addEventListener('change', e => { settings.micId = e.target.value; store.set('micId', settings.micId); startCamera(); });
+
+prompter.addEventListener('wheel', e => { e.preventDefault(); nudge(e.deltaY); }, { passive: false });
+window.addEventListener('resize', layout);
+
+document.addEventListener('keydown', e => {
+  const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName) && e.target.type !== 'range';
+  if (e.key === 'Escape') { closeDrawers(); return; }
+  if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+  const step = settings.fs * 1.38 * 2;
+  switch (e.key) {
+    case ' ': $('playBtn').onclick(); break;
+    case 'r': case 'R': toggleRecord(); break;
+    case 'ArrowUp': setSpeed(settings.wpm + 5); break;
+    case 'ArrowDown': setSpeed(settings.wpm - 5); break;
+    case 'ArrowLeft': nudge(-step); break;
+    case 'ArrowRight': nudge(step); break;
+    case 'Home': offset = 0; render(); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+
+// Browsers keep the audio meter suspended until the first click or key press
+const wakeAudio = () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); };
+document.addEventListener('pointerdown', wakeAudio);
+document.addEventListener('keydown', wakeAudio);
+
+window.addEventListener('beforeunload', e => {
+  if (state === 'recording' || takes.some(t => !t.saved)) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ---------- Loop ----------
+let lastFrame = performance.now();
+function frame(now) {
+  const dt = Math.min((now - lastFrame) / 1000, 0.1);
+  lastFrame = now;
+  if (playing) {
+    // Speed is words per minute, so it holds steady whatever the text size or width
+    offset += settings.wpm / 60 / Math.max(words, 1) * textHeight * dt;
+    if (offset >= textHeight) { offset = textHeight; setPlaying(false); }
+    render();
+  }
+  if (state === 'recording') $('timer').textContent = fmtTime((now - recStart) / 1000);
+  drawMeter();
+  requestAnimationFrame(frame);
+}
+
+// ---------- Start ----------
+scriptEl.value = store.get('script', '');
+$('wpm').value = settings.wpm;
+$('fs').value = settings.fs;
+$('w').value = settings.w;
+$('mirror').checked = settings.mirror;
+$('autoScroll').checked = settings.autoScroll;
+document.body.classList.toggle('mirror', settings.mirror);
+layout();
+if (!words) openDrawer('scriptDrawer');
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+requestAnimationFrame(frame);
+startCamera();
+</script>
+</body>
+</html>

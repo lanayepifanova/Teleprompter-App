@@ -49,14 +49,14 @@
   /* Prompter: sits top-centre, right under the laptop camera */
   #prompter {
     position: fixed; top: 0; left: 50%;
-    width: var(--w); height: 46vh;
+    width: var(--w); height: 75vh;
     transform: translateX(-50%);
     background: rgba(0, 0, 0, .6);
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
     overflow: hidden;
     cursor: ns-resize;
-    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 72%, transparent 100%);
-            mask-image: linear-gradient(to bottom, #000 0, #000 72%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
   }
   #scroll {
     position: absolute; top: 0; left: 0; right: 0;
@@ -68,8 +68,9 @@
     text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
   }
   #scroll.empty { color: var(--muted); font-weight: 500; }
+  body.noscript #prompter { display: none; }
   .marker {
-    position: absolute; top: 28%;
+    position: absolute; top: 17%;
     width: 0; height: 0;
     border: 9px solid transparent;
     margin-top: -9px;
@@ -172,7 +173,15 @@
     font-size: 15px; line-height: 1.5;
     outline: none;
   }
-  #script:focus { border-color: var(--accent); }
+  #script:focus, #scriptName:focus, #scriptSel:focus { border-color: var(--accent); }
+  #scriptSel, #scriptName {
+    height: 38px; padding: 0 10px; min-width: 0;
+    background: rgba(0, 0, 0, .35);
+    border: 1px solid var(--line); border-radius: 10px;
+    color: var(--text); outline: none;
+  }
+  #scriptSel { flex: 1; }
+  #script:disabled, #scriptName:disabled, #deleteBtn:disabled { opacity: .45; cursor: default; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); }
   .field { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
   .field select {
@@ -234,9 +243,11 @@
 </div>
 
 <aside class="drawer left" id="scriptDrawer">
-  <header><h2>Script</h2><button class="btn primary" id="scriptDone">Done</button></header>
+  <header><h2>Scripts</h2><button class="btn primary" id="scriptDone">Done</button></header>
+  <div class="row"><select id="scriptSel" title="Saved scripts"></select><button class="btn" id="newBtn">New</button></div>
+  <input id="scriptName" type="text" placeholder="Script name (optional)" spellcheck="false">
   <textarea id="script" placeholder="Paste your script here…" spellcheck="false"></textarea>
-  <div class="row"><span id="stats"></span><button class="btn" id="clearBtn">Clear</button></div>
+  <div class="row"><span id="stats"></span><button class="btn" id="deleteBtn">Delete</button></div>
 </aside>
 
 <aside class="drawer right" id="takesDrawer">
@@ -262,6 +273,7 @@
   </div>
 </aside>
 
+<script src="library.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const cam = $('cam'), prompter = $('prompter'), scrollEl = $('scroll'), scriptEl = $('script');
@@ -286,7 +298,7 @@ const settings = {
 };
 
 // ---------- Prompter ----------
-const READ_LINE = 0.28;          // where the reading markers sit, as a fraction of the prompter height
+const READ_LINE = 0.17;          // where the reading markers sit, as a fraction of the prompter height
 let offset = 0;                  // px scrolled past the reading line
 let textHeight = 0, words = 0;
 let playing = false;
@@ -313,7 +325,7 @@ function layout() {
   $('wVal').textContent = settings.w + '%';
   $('stats').textContent = words
     ? words + ' words · about ' + fmtTime(words / settings.wpm * 60) + ' at this speed'
-    : 'No script yet';
+    : current === NO_SCRIPT ? 'Camera only' : 'No script yet';
   render();
 }
 
@@ -436,6 +448,7 @@ function setState(next) {
   document.body.classList.toggle('recording', state === 'recording');
   document.body.classList.toggle('countdown', state === 'countdown');
   $('camSel').disabled = $('micSel').disabled = state !== 'idle';
+  if (state !== 'recording') $('timer').textContent = '0:00';
 }
 
 function pickMime() {
@@ -541,6 +554,97 @@ function addTake(take) {
   $('takes').prepend(el);
 }
 
+// ---------- Saved scripts ----------
+// Picking this hides the prompter, leaving just the camera
+const NO_SCRIPT = { id: 'none', name: '', text: '' };
+const newScript = () => ({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: '', text: '' });
+let scripts = store.get('scripts', null);
+if (!Array.isArray(scripts) || !scripts.length) {
+  // First run, or coming from the single-script version
+  scripts = [Object.assign(newScript(), { text: store.get('script', '') })];
+}
+
+// library.js ships ready-made scripts. Each is added once, so deleting one here keeps it deleted.
+// When one is reworded in library.js, the saved copy is replaced with the new version.
+const seenLibrary = store.get('libraryIds', []);
+const libraryRevs = store.get('libraryRevs', {});
+const revOf = str => { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return h; };
+(window.TP_LIBRARY || []).forEach(item => {
+  const fresh = { id: item.id, name: item.name || '', text: item.text || '', group: item.group || '' };
+  const rev = revOf(fresh.group + '\n' + fresh.name + '\n' + fresh.text);
+  if (!seenLibrary.includes(item.id)) {
+    seenLibrary.push(item.id);
+    scripts.push(fresh);
+  } else if (libraryRevs[item.id] !== rev) {
+    const saved = scripts.find(s => s.id === item.id);
+    if (saved) Object.assign(saved, fresh);
+  }
+  libraryRevs[item.id] = rev;
+});
+store.set('libraryIds', seenLibrary);
+store.set('libraryRevs', libraryRevs);
+if (Array.isArray(window.TP_LIBRARY)) {
+  // A script taken out of library.js goes from the saved list too
+  const inLibrary = window.TP_LIBRARY.map(item => item.id);
+  const kept = scripts.filter(s => !seenLibrary.includes(s.id) || inLibrary.includes(s.id));
+  scripts = kept.length ? kept : [newScript()];
+}
+if (scripts.length > 1) scripts = scripts.filter(s => s.name.trim() || s.text.trim());
+let current = store.get('currentId', '') === NO_SCRIPT.id ? NO_SCRIPT
+  : scripts.find(s => s.id === store.get('currentId', '')) || scripts[0];
+
+function saveScripts() { store.set('scripts', scripts); store.set('currentId', current.id); }
+
+function scriptLabel(s) {
+  if (s.name.trim()) return s.name.trim();
+  const start = (s.text.trim().match(/\S+/g) || []).slice(0, 6).join(' ');
+  return start ? (start.length > 40 ? start.slice(0, 40) + '…' : start) : 'Untitled script';
+}
+
+function fillScriptList() {
+  const sel = $('scriptSel');
+  sel.textContent = '';
+  const none = document.createElement('option');
+  none.value = NO_SCRIPT.id; none.textContent = 'No script (camera only)'; none.selected = current === NO_SCRIPT;
+  sel.appendChild(none);
+  const groups = {};
+  scripts.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.id; o.textContent = scriptLabel(s); o.selected = s === current;
+    if (!s.group) { sel.appendChild(o); return; }
+    if (!groups[s.group]) {
+      groups[s.group] = document.createElement('optgroup');
+      groups[s.group].label = s.group;
+      sel.appendChild(groups[s.group]);
+    }
+    groups[s.group].appendChild(o);
+  });
+}
+
+function selectScript(s) {
+  // Blank scripts only exist while you're on them, so no "Untitled script" lingers in the list
+  scripts = scripts.filter(x => x === s || x.name.trim() || x.text.trim());
+  current = s;
+  scriptEl.value = s.text;
+  $('scriptName').value = s.name;
+  const none = s === NO_SCRIPT;
+  document.body.classList.toggle('noscript', none);
+  scriptEl.disabled = $('scriptName').disabled = $('deleteBtn').disabled = none;
+  offset = 0;
+  setPlaying(false);
+  resetDelete();
+  saveScripts();
+  fillScriptList();
+  layout();
+}
+
+let deleteArmed = null;
+function resetDelete() {
+  clearTimeout(deleteArmed);
+  deleteArmed = null;
+  $('deleteBtn').textContent = 'Delete';
+}
+
 // ---------- Drawers ----------
 function openDrawer(id) {
   closeDrawers();
@@ -558,7 +662,26 @@ $('scriptBtn').onclick = () => toggleDrawer('scriptDrawer');
 $('scriptDone').onclick = closeDrawers;
 $('takesBtn').onclick = () => toggleDrawer('takesDrawer');
 $('takesClose').onclick = closeDrawers;
-$('clearBtn').onclick = () => { scriptEl.value = ''; store.set('script', ''); offset = 0; setPlaying(false); layout(); scriptEl.focus(); };
+$('scriptSel').addEventListener('change', e => selectScript(e.target.value === NO_SCRIPT.id ? NO_SCRIPT : scripts.find(s => s.id === e.target.value) || current));
+$('scriptName').addEventListener('input', e => { current.name = e.target.value; saveScripts(); fillScriptList(); });
+$('newBtn').onclick = () => {
+  // Reuse a blank script rather than piling up empty ones
+  let blank = scripts.find(s => !s.name.trim() && !s.text.trim());
+  if (!blank) { blank = newScript(); scripts.push(blank); }
+  selectScript(blank);
+  scriptEl.focus();
+};
+$('deleteBtn').onclick = () => {
+  if (!deleteArmed) {
+    $('deleteBtn').textContent = 'Click again to delete';
+    deleteArmed = setTimeout(resetDelete, 3000);
+    return;
+  }
+  const i = scripts.indexOf(current);
+  scripts.splice(i, 1);
+  if (!scripts.length) scripts.push(newScript());
+  selectScript(scripts[Math.min(i, scripts.length - 1)]);
+};
 $('restartBtn').onclick = () => { offset = 0; render(); };
 $('playBtn').onclick = () => {
   if (!playing && offset >= textHeight - 1) offset = 0;
@@ -566,7 +689,12 @@ $('playBtn').onclick = () => {
 };
 $('recBtn').onclick = toggleRecord;
 
-scriptEl.addEventListener('input', () => { store.set('script', scriptEl.value); layout(); });
+scriptEl.addEventListener('input', () => {
+  current.text = scriptEl.value;
+  saveScripts();
+  if (!current.name.trim()) fillScriptList();
+  layout();
+});
 $('wpm').addEventListener('input', e => setSpeed(+e.target.value));
 $('fs').addEventListener('input', e => { settings.fs = +e.target.value; store.set('fs', settings.fs); layout(); });
 $('w').addEventListener('input', e => { settings.w = +e.target.value; store.set('w', settings.w); layout(); });
@@ -625,7 +753,7 @@ function frame(now) {
 }
 
 // ---------- Start ----------
-scriptEl.value = store.get('script', '');
+selectScript(current);
 $('wpm').value = settings.wpm;
 $('fs').value = settings.fs;
 $('w').value = settings.w;
@@ -633,7 +761,7 @@ $('mirror').checked = settings.mirror;
 $('autoScroll').checked = settings.autoScroll;
 document.body.classList.toggle('mirror', settings.mirror);
 layout();
-if (!words) openDrawer('scriptDrawer');
+if (!words && current !== NO_SCRIPT) openDrawer('scriptDrawer');
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
 requestAnimationFrame(frame);
 startCamera();

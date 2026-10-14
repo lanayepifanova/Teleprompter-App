@@ -7,7 +7,6 @@
 <style>
   :root {
     --fs: 36px;
-    --w: 55vw;
     --bg: #0b0c0f;
     --panel: rgba(18, 20, 25, .92);
     --line: rgba(255, 255, 255, .12);
@@ -27,13 +26,14 @@
   }
   button, select, input, textarea { font: inherit; color: inherit; }
 
-  /* Camera */
+  /* Camera: the preview is a box the same shape as the video being recorded */
   #cam {
-    position: fixed; inset: 0;
-    width: 100%; height: 100%;
+    position: fixed; inset: 0; margin: auto;
+    width: min(100vw, 100vh * 16 / 9); height: min(100vh, 100vw * 9 / 16);
     object-fit: cover;
     background: #000;
   }
+  body.vertical #cam { width: min(100vw, 100vh * 9 / 16); height: min(100vh, 100vw * 16 / 9); }
   body.mirror #cam { transform: scaleX(-1); }
 
   #notice {
@@ -46,17 +46,32 @@
   #notice div { max-width: 460px; }
   #notice b { display: block; color: var(--text); font-size: 20px; margin-bottom: 8px; }
 
-  /* Prompter: sits top-centre, right under the laptop camera */
+  /* Prompter: starts top-centre, right under the laptop camera. Drag it to move, drag an edge to resize */
   #prompter {
-    position: fixed; top: 0; left: 50%;
-    width: var(--w); height: 75vh;
-    transform: translateX(-50%);
+    position: fixed;
+    cursor: move; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  #prompter:hover, #prompter.adjusting { outline: 1px solid rgba(255, 255, 255, .28); outline-offset: -1px; }
+  #view {
+    position: absolute; inset: 0;
     background: rgba(0, 0, 0, .6);
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
     overflow: hidden;
-    cursor: ns-resize;
     -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
             mask-image: linear-gradient(to bottom, #000 0, #000 84%, transparent 100%);
+  }
+  .grip { position: absolute; }
+  .grip.n, .grip.s { left: 0; right: 0; height: 10px; cursor: ns-resize; }
+  .grip.e, .grip.w { top: 0; bottom: 0; width: 10px; cursor: ew-resize; }
+  .grip.n { top: 0; } .grip.s { bottom: 0; } .grip.e { right: 0; } .grip.w { left: 0; }
+  .grip.nw, .grip.ne, .grip.sw, .grip.se { width: 20px; height: 20px; }
+  .grip.nw { top: 0; left: 0; cursor: nwse-resize; }
+  .grip.ne { top: 0; right: 0; cursor: nesw-resize; }
+  .grip.sw { bottom: 0; left: 0; cursor: nesw-resize; }
+  .grip.se { bottom: 0; right: 0; cursor: nwse-resize; }
+  #prompter:hover .grip.se, #prompter.adjusting .grip.se {
+    background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, .55) 50%);
   }
   #scroll {
     position: absolute; top: 0; left: 0; right: 0;
@@ -197,7 +212,7 @@
     background: rgba(0, 0, 0, .3);
     border: 1px solid var(--line); border-radius: 12px;
   }
-  .take video { width: 100%; border-radius: 8px; background: #000; }
+  .take video { width: 100%; max-height: 50vh; border-radius: 8px; background: #000; }
   .take .row a { text-decoration: none; display: inline-flex; align-items: center; }
   #noTakes { color: var(--muted); }
   kbd {
@@ -218,10 +233,16 @@
 <video id="cam" autoplay muted playsinline></video>
 <div id="notice"><div><b>Waiting for camera…</b><span>Allow camera and microphone access when your browser asks.</span></div></div>
 
-<div id="prompter" title="Scroll here to move the script by hand">
-  <div id="scroll"></div>
-  <div class="marker l"></div>
-  <div class="marker r"></div>
+<div id="prompter" title="Drag to move · drag an edge or corner to resize · scroll to move the script · double-click to reset">
+  <div id="view">
+    <div id="scroll"></div>
+    <div class="marker l"></div>
+    <div class="marker r"></div>
+  </div>
+  <i class="grip n" data-dir="n"></i><i class="grip s" data-dir="s"></i>
+  <i class="grip e" data-dir="e"></i><i class="grip w" data-dir="w"></i>
+  <i class="grip nw" data-dir="nw"></i><i class="grip ne" data-dir="ne"></i>
+  <i class="grip sw" data-dir="sw"></i><i class="grip se" data-dir="se"></i>
 </div>
 
 <div id="count"></div>
@@ -237,8 +258,9 @@
   <div class="sep"></div>
   <label class="slider"><span>Speed <b id="wpmVal"></b></span><input type="range" id="wpm" min="60" max="260" step="5"></label>
   <label class="slider"><span>Text size <b id="fsVal"></b></span><input type="range" id="fs" min="20" max="80" step="1"></label>
-  <label class="slider"><span>Width <b id="wVal"></b></span><input type="range" id="w" min="30" max="100" step="1"></label>
+  <label class="slider"><span>Width <b id="wVal"></b></span><input type="range" id="w" min="20" max="100" step="1"></label>
   <div class="sep"></div>
+  <button class="btn" id="formatBtn" title="Switch between horizontal (YouTube) and vertical (phone) video (V)"></button>
   <button class="btn" id="takesBtn">Takes</button>
 </div>
 
@@ -264,6 +286,7 @@
   <h3>Keyboard</h3>
   <div class="keys">
     <kbd>R</kbd><span>Record / stop</span>
+    <kbd>V</kbd><span>Vertical / horizontal video</span>
     <kbd>Space</kbd><span>Play / pause the script</span>
     <kbd>↑</kbd> <span>Faster</span>
     <kbd>↓</kbd> <span>Slower</span>
@@ -290,7 +313,12 @@ const store = {
 const settings = {
   wpm: store.get('wpm', 130),
   fs: store.get('fs', 36),
+  // Prompter box, in % of the window. x is null while it sits centred
   w: store.get('w', 55),
+  h: store.get('h', 75),
+  x: store.get('x', null),
+  y: store.get('y', 0),
+  format: store.get('format', 'horizontal'),
   mirror: store.get('mirror', true),
   autoScroll: store.get('autoScroll', true),
   camId: store.get('camId', ''),
@@ -310,10 +338,29 @@ function fmtTime(seconds) {
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
 
+const MIN_W = 20, MIN_H = 15;
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+function placeBox() {
+  settings.w = clamp(settings.w, MIN_W, 100);
+  settings.h = clamp(settings.h, MIN_H, 100);
+  if (settings.x === null) settings.x = (100 - settings.w) / 2;
+  settings.x = clamp(settings.x, 0, 100 - settings.w);
+  settings.y = clamp(settings.y, 0, 100 - settings.h);
+  prompter.style.left = settings.x + 'vw';
+  prompter.style.top = settings.y + 'vh';
+  prompter.style.width = settings.w + 'vw';
+  prompter.style.height = settings.h + 'vh';
+}
+
+function saveBox() {
+  ['w', 'h', 'x', 'y'].forEach(k => store.set(k, settings[k]));
+}
+
 function layout() {
   const progress = textHeight ? offset / textHeight : 0;
   document.documentElement.style.setProperty('--fs', settings.fs + 'px');
-  document.documentElement.style.setProperty('--w', settings.w + 'vw');
+  placeBox();
   const text = scriptEl.value;
   words = countWords(text);
   scrollEl.classList.toggle('empty', !words);
@@ -322,7 +369,8 @@ function layout() {
   offset = words ? progress * textHeight : 0;
   $('wpmVal').textContent = settings.wpm + ' wpm';
   $('fsVal').textContent = settings.fs + ' px';
-  $('wVal').textContent = settings.w + '%';
+  $('w').value = Math.round(settings.w);
+  $('wVal').textContent = Math.round(settings.w) + '%';
   $('stats').textContent = words
     ? words + ' words · about ' + fmtTime(words / settings.wpm * 60) + ' at this speed'
     : current === NO_SCRIPT ? 'Camera only' : 'No script yet';
@@ -447,7 +495,7 @@ function setState(next) {
   state = next;
   document.body.classList.toggle('recording', state === 'recording');
   document.body.classList.toggle('countdown', state === 'countdown');
-  $('camSel').disabled = $('micSel').disabled = state !== 'idle';
+  $('camSel').disabled = $('micSel').disabled = $('formatBtn').disabled = state !== 'idle';
   if (state !== 'recording') $('timer').textContent = '0:00';
 }
 
@@ -460,6 +508,42 @@ function pickMime() {
     'video/webm'
   ];
   return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+// ---------- Video shape ----------
+const FORMATS = {
+  horizontal: { w: 1920, h: 1080, label: '▭ 16:9' },
+  vertical: { w: 1080, h: 1920, label: '▯ 9:16' }
+};
+if (!FORMATS[settings.format]) settings.format = 'horizontal';
+let cropCanvas = null, cropCtx = null, crop = null;
+
+function setFormat(format) {
+  if (state !== 'idle') return;
+  settings.format = format;
+  store.set('format', format);
+  document.body.classList.toggle('vertical', format === 'vertical');
+  $('formatBtn').textContent = FORMATS[format].label;
+}
+
+// A camera that already gives the chosen shape is recorded as it is. Otherwise (a vertical
+// take from a laptop's wide camera) the middle of the picture is cut out through a canvas.
+function framedStream() {
+  const f = FORMATS[settings.format], vw = cam.videoWidth, vh = cam.videoHeight;
+  crop = null;
+  if (!vw || !vh || Math.abs(vw / vh - f.w / f.h) < 0.01) return stream;
+  if (!cropCanvas) { cropCanvas = document.createElement('canvas'); cropCtx = cropCanvas.getContext('2d'); }
+  cropCanvas.width = f.w; cropCanvas.height = f.h;
+  const sw = Math.min(vw, vh * f.w / f.h), sh = Math.min(vh, vw * f.h / f.w);
+  crop = { sx: (vw - sw) / 2, sy: (vh - sh) / 2, sw, sh };
+  drawCrop();
+  const out = cropCanvas.captureStream(30);
+  stream.getAudioTracks().forEach(t => out.addTrack(t));
+  return out;
+}
+
+function drawCrop() {
+  if (crop) cropCtx.drawImage(cam, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cropCanvas.width, cropCanvas.height);
 }
 
 function toggleRecord() {
@@ -492,8 +576,9 @@ function beginRecording() {
   const mimeType = pickMime();
   chunks = [];
   try {
-    recorder = new MediaRecorder(stream, { mimeType: mimeType || undefined, videoBitsPerSecond: 8000000 });
+    recorder = new MediaRecorder(framedStream(), { mimeType: mimeType || undefined, videoBitsPerSecond: 8000000 });
   } catch (err) {
+    crop = null;
     setState('idle');
     showNotice('Couldn’t start recording', err.message || err.name);
     return;
@@ -511,6 +596,7 @@ function finishRecording() {
   const blob = new Blob(chunks, { type });
   const seconds = (performance.now() - recStart) / 1000;
   chunks = [];
+  if (crop) { recorder.stream.getVideoTracks().forEach(t => t.stop()); crop = null; }
   setState('idle');
   setPlaying(false);
   if (!blob.size) return;
@@ -520,7 +606,7 @@ function finishRecording() {
   addTake({
     url: URL.createObjectURL(blob),
     name: 'take-' + (takes.length + 1) + '_' + stamp + (type.includes('mp4') ? '.mp4' : '.webm'),
-    info: fmtTime(seconds) + ' · ' + (blob.size / 1048576).toFixed(1) + ' MB',
+    info: (settings.format === 'vertical' ? '9:16' : '16:9') + ' · ' + fmtTime(seconds) + ' · ' + (blob.size / 1048576).toFixed(1) + ' MB',
     saved: false
   });
   openDrawer('takesDrawer');
@@ -688,6 +774,7 @@ $('playBtn').onclick = () => {
   setPlaying(!playing);
 };
 $('recBtn').onclick = toggleRecord;
+$('formatBtn').onclick = () => setFormat(settings.format === 'vertical' ? 'horizontal' : 'vertical');
 
 scriptEl.addEventListener('input', () => {
   current.text = scriptEl.value;
@@ -697,7 +784,14 @@ scriptEl.addEventListener('input', () => {
 });
 $('wpm').addEventListener('input', e => setSpeed(+e.target.value));
 $('fs').addEventListener('input', e => { settings.fs = +e.target.value; store.set('fs', settings.fs); layout(); });
-$('w').addEventListener('input', e => { settings.w = +e.target.value; store.set('w', settings.w); layout(); });
+$('w').addEventListener('input', e => {
+  // Widen and narrow around the middle of the box
+  const centre = settings.x + settings.w / 2;
+  settings.w = +e.target.value;
+  settings.x = centre - settings.w / 2;
+  layout();
+  saveBox();
+});
 $('mirror').addEventListener('change', e => {
   settings.mirror = e.target.checked; store.set('mirror', settings.mirror);
   document.body.classList.toggle('mirror', settings.mirror);
@@ -707,6 +801,41 @@ $('camSel').addEventListener('change', e => { settings.camId = e.target.value; s
 $('micSel').addEventListener('change', e => { settings.micId = e.target.value; store.set('micId', settings.micId); startCamera(); });
 
 prompter.addEventListener('wheel', e => { e.preventDefault(); nudge(e.deltaY); }, { passive: false });
+
+// Drag the prompter to move it, or an edge or corner to resize it
+let drag = null;
+prompter.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  drag = { dir: e.target.dataset.dir || '', px: e.clientX, py: e.clientY, x: settings.x, y: settings.y, w: settings.w, h: settings.h };
+  prompter.setPointerCapture(e.pointerId);
+  prompter.classList.add('adjusting');
+  e.preventDefault();
+});
+prompter.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = (e.clientX - drag.px) / innerWidth * 100, dy = (e.clientY - drag.py) / innerHeight * 100;
+  const d = drag.dir;
+  if (!d) { settings.x = drag.x + dx; settings.y = drag.y + dy; }
+  // The dragged edge follows the pointer and the opposite one stays put
+  if (d.includes('e')) settings.w = clamp(drag.w + dx, MIN_W, 100 - drag.x);
+  if (d.includes('w')) { settings.w = clamp(drag.w - dx, MIN_W, drag.x + drag.w); settings.x = drag.x + drag.w - settings.w; }
+  if (d.includes('s')) settings.h = clamp(drag.h + dy, MIN_H, 100 - drag.y);
+  if (d.includes('n')) { settings.h = clamp(drag.h - dy, MIN_H, drag.y + drag.h); settings.y = drag.y + drag.h - settings.h; }
+  layout();
+});
+const endDrag = () => {
+  if (!drag) return;
+  drag = null;
+  prompter.classList.remove('adjusting');
+  saveBox();
+};
+prompter.addEventListener('pointerup', endDrag);
+prompter.addEventListener('pointercancel', endDrag);
+prompter.addEventListener('dblclick', () => {
+  Object.assign(settings, { w: 55, h: 75, x: null, y: 0 });
+  layout();
+  saveBox();
+});
 window.addEventListener('resize', layout);
 
 document.addEventListener('keydown', e => {
@@ -717,6 +846,7 @@ document.addEventListener('keydown', e => {
   switch (e.key) {
     case ' ': $('playBtn').onclick(); break;
     case 'r': case 'R': toggleRecord(); break;
+    case 'v': case 'V': $('formatBtn').onclick(); break;
     case 'ArrowUp': setSpeed(settings.wpm + 5); break;
     case 'ArrowDown': setSpeed(settings.wpm - 5); break;
     case 'ArrowLeft': nudge(-step); break;
@@ -748,6 +878,7 @@ function frame(now) {
     render();
   }
   if (state === 'recording') $('timer').textContent = fmtTime((now - recStart) / 1000);
+  drawCrop();
   drawMeter();
   requestAnimationFrame(frame);
 }
@@ -756,10 +887,10 @@ function frame(now) {
 selectScript(current);
 $('wpm').value = settings.wpm;
 $('fs').value = settings.fs;
-$('w').value = settings.w;
 $('mirror').checked = settings.mirror;
 $('autoScroll').checked = settings.autoScroll;
 document.body.classList.toggle('mirror', settings.mirror);
+setFormat(settings.format);
 layout();
 if (!words && current !== NO_SCRIPT) openDrawer('scriptDrawer');
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
